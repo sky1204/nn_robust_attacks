@@ -47,7 +47,9 @@ import scipy.misc
 
 import numpy as np
 from six.moves import urllib
+
 import tensorflow as tf
+from PIL import Image
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -182,7 +184,12 @@ def run_inference_on_image(image):
             input_map={'DecodeJpeg:0': tf.reshape(img,((299,299,3)))},
             return_elements=['softmax/logits:0'])
 
-    dat = scipy.misc.imresize(scipy.misc.imread(image),(299,299))
+    
+    #dat = np.array(Image.fromarray((image)).resize(299,299))
+    dat = np.array(scipy.misc.imresize(scipy.misc.imread(image),(299,299)),dtype=np.float32)/255-.5
+   #out_bicu = np.array(Image.fromarray(valid_lr_img[0]).resize((size[0] * 4, size[1] * 4), resample=Image.BICUBIC))
+     
+    #dat = scipy.misc.imresize(scipy.misc.imread(image),(299,299))
     predictions = sess.run(softmax_tensor,
                            {img: dat})
 
@@ -248,6 +255,7 @@ def main(_):
 def readimg(ff):
   f = "../imagenetdata/imgs/"+ff
   img = np.array(scipy.misc.imresize(scipy.misc.imread(f),(299,299)),dtype=np.float32)/255-.5
+  #img= np.array(Image.fromarray(scipy.misc.imread(f)).resize(299,299),dtype=np.float32)/255-.5
   if img.shape != (299, 299, 3):
     return None
   return [img, int(ff.split(".")[0])]

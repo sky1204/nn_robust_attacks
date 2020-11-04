@@ -1,121 +1,92 @@
-## train_models.py -- train the neural network models for attacking
+## test_attack.py -- sample code to test attack procedure
 ##
 ## Copyright (C) 2016, Nicholas Carlini <nicholas@carlini.com>.
 ##
 ## This program is licenced under the BSD 2-Clause licence,
 ## contained in the LICENCE file in this directory.
 
-
-import numpy as np
-from keras.models import Sequential
-from keras.layers import Dense, Dropout, Activation, Flatten
-from keras.layers import Conv2D, MaxPooling2D
-from keras.optimizers import SGD
-
 import tensorflow as tf
-from setup_mnist import MNIST
-from setup_cifar import CIFAR
-import os
+import numpy as np
+import time
+#import tensorflow.compat.v1 as tf
 
-def train(data, file_name, params, num_epochs=50, batch_size=128, train_temp=1, init=None):
+from setup_cifar import CIFAR, CIFARModel
+from setup_mnist import MNIST, MNISTModel
+from setup_inception import ImageNet, InceptionModel
+
+from l2_attack import CarliniL2
+from l0_attack import CarliniL0
+from li_attack import CarliniLi
+
+
+def show(img):
     """
-    Standard neural network training procedure.
+    Show MNSIT digits in the console.
     """
-    model = Sequential()
+    remap = "  .*#"+"#"*100
+    img = (img.flatten()+.5)*3
+    if len(img) != 784: return
+    print("START")
+    for i in range(28):
+        print("".join([remap[int(round(x))] for x in img[i*28:i*28+28]]))
 
-    print(data.train_data.shape)
-    
-    model.add(Conv2D(params[0], (3, 3),
-                            input_shape=data.train_data.shape[1:]))
-    model.add(Activation('relu'))
-    model.add(Conv2D(params[1], (3, 3)))
-    model.add(Activation('relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
 
-    model.add(Conv2D(params[2], (3, 3)))
-    model.add(Activation('relu'))
-    model.add(Conv2D(params[3], (3, 3)))
-    model.add(Activation('relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-
-    model.add(Flatten())
-    model.add(Dense(params[4]))
-    model.add(Activation('relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(params[5]))
-    model.add(Activation('relu'))
-    model.add(Dense(10))
-    print(init)
-    print('=init is')
-    inith=(str)(init)+'.h5'
-    if init != None:
-        #model.load(init)
-        model.load_weights(inith)
-
-    def fn(correct, predicted):
-        return tf.nn.softmax_cross_entropy_with_logits(labels=correct,
-                                                       logits=predicted/train_temp)
-
-    sgd = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-    
-    model.compile(loss=fn,
-                  optimizer=sgd,
-                  metrics=['accuracy'])
-    from keras.callbacks import EarlyStopping
-    early_stopping = EarlyStopping(monitor='val_loss', patience=4, mode='auto')
-    model.fit(data.train_data, data.train_labels,
-              batch_size=batch_size,
-              validation_data=(data.validation_data, data.validation_labels),
-              epochs=num_epochs,
-              shuffle=True,
-              callbacks = [early_stopping])
-    print(file_name)
-    file_nameh=file_name+'.h5'
-    if file_name != None:
-        #model.save(file_name)
-        model.save(file_nameh)
-
-    return model
-
-def train_distillation(data, file_name, params, num_epochs=50, batch_size=128, train_temp=1):
+def generate_data(data, samples, targeted=True, start=0, inception=False):
     """
-    Train a network using defensive distillation.
+    Generate the input data to the attack algorithm.
 
-    Distillation as a Defense to Adversarial Perturbations against Deep Neural Networks
-    Nicolas Papernot, Patrick McDaniel, Xi Wu, Somesh Jha, Ananthram Swami
-    IEEE S&P, 2016.
+    data: the images to attack
+    samples: number of samples to use
+    targeted: if true, construct targeted attacks, otherwise untargeted attacks
+    start: offset into data to use
+    inception: if targeted and inception, randomly sample 100 targets intead of 1000
     """
-    if not os.path.exists(file_name+"_init"):
-        # Train for one epoch to get a good starting point.
-        train(data, file_name+"_init", params, 1, batch_size)
-    
-    # now train the teacher at the given temperature
-    teacher = train(data, file_name+"_teacher", params, num_epochs, batch_size, train_temp,
-                    init=file_name+"_init")
+    inputs = []
+    targets = []
+    for i in range(samples):
+        if targeted:
+            if inception:
+                seq = random.sample(range(1,1001), 10)
+            else:
+                seq = range(data.test_labels.shape[1])
 
-    # evaluate the labels at temperature t
-    predicted = teacher.predict(data.train_data)
+            for j in seq:
+                if (j == np.argmax(data.test_labels[start+i])) and (inception == False):
+                    continue
+                inputs.append(data.test_data[start+i])
+                targets.append(np.eye(data.test_labels.shape[1])[j])
+        else:
+            inputs.append(data.test_data[start+i])
+            targets.append(data.test_labels[start+i])
+
+    inputs = np.array(inputs)
+    targets = np.array(targets)
+
+    return inputs, targets
+
+
+if __name__ == "__main__":
     with tf.Session() as sess:
-        y = sess.run(tf.nn.softmax(predicted/train_temp))
-        print(y)
-        data.train_labels = y
+        data, model =  MNIST(), MNISTModel("models/mnist.h5", sess)
+        #data, model =  CIFAR(), CIFARModel("models/cifar", sess)
+        attack = CarliniL2(sess, model, batch_size=9, max_iterations=1000, confidence=0)
+        #attack = CarliniL0(sess, model, max_iterations=1000, initial_const=10,
+        #                   largest_const=15)
 
-    # train the student model at temperature t
-    student = train(data, file_name, params, num_epochs, batch_size, train_temp,
-                    init=file_name+"_init")
+        inputs, targets = generate_data(data, samples=1, targeted=True,
+                                        start=0, inception=False)
+        timestart = time.time()
+        adv = attack.attack(inputs, targets)
+        timeend = time.time()
+        
+        print("Took",timeend-timestart,"seconds to run",len(inputs),"samples.")
 
-    # and finally we predict at temperature 1
-    predicted = student.predict(data.train_data)
+        for i in range(len(adv)):
+            print("Valid:")
+            show(inputs[i])
+            print("Adversarial:")
+            show(adv[i])
+            
+            print("Classification:", model.model.predict(adv[i:i+1]))
 
-    print(predicted)
-    
-if not os.path.isdir('models'):
-    os.makedirs('models')
-
-train(CIFAR(), "models/cifar", [64, 64, 128, 128, 256, 256], num_epochs=50)
-train(MNIST(), "models/mnist", [32, 32, 64, 64, 200, 200], num_epochs=50)
-
-train_distillation(MNIST(), "models/mnist-distilled-100", [32, 32, 64, 64, 200, 200],
-                   num_epochs=50, train_temp=100)
-train_distillation(CIFAR(), "models/cifar-distilled-100", [64, 64, 128, 128, 256, 256],
-                   num_epochs=50, train_temp=100)
+            print("Total distortion:", np.sum((adv[i]-inputs[i])**2)**.5)

@@ -7,6 +7,8 @@ Privacy, 2017.
 Implementations of the three attack algorithms in Tensorflow. It runs correctly
 on Python 3 (and probably Python 2 without many changes).
 
+Note: Use tensorflow==1.9 
+
 To evaluate the robustness of a neural network, create a model class with a
 predict method that will run the prediction network *without softmax*.  The
 model should have variables 
